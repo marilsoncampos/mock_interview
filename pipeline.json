@@ -1,0 +1,65 @@
+{
+  "sources": [
+    {
+      "name": "user_events",
+      "type": "csv",
+      "location": "/data/events.csv",
+      "schedule": "0 */6 * * *",
+      "batch_size": 500,
+      "properties": {
+        "delimiter": ",",
+        "encoding": "utf-8"
+      }
+    },
+    {
+      "name": "transactions",
+      "type": "csv",
+      "location": "/data/transactions.csv",
+      "schedule": "0 0 * * *",
+      "batch_size": 1000
+    }
+  ],
+  "transforms": [
+    {
+      "name": "filter_active",
+      "operation": "filter",
+      "config": {
+        "field": "status",
+        "operator": "eq",
+        "value": "active"
+      }
+    },
+    {
+      "name": "normalize_emails",
+      "operation": "normalize",
+      "config": {
+        "fields": ["email", "username"]
+      },
+      "depends_on": ["filter_active"]
+    },
+    {
+      "name": "dedup_users",
+      "operation": "deduplicate",
+      "config": {
+        "key_field": "user_id"
+      },
+      "depends_on": ["normalize_emails"]
+    }
+  ],
+  "destination": {
+    "type": "jsonfile",
+    "connection_string": "/data/output.ndjson",
+    "table_name": "processed_events",
+    "write_mode": "append",
+    "retry_attempts": 3,
+    "retry_delay": 1000000000
+  },
+  "pipeline": {
+    "workers": 4,
+    "buffer_size": 100,
+    "flush_interval": 5000000000,
+    "max_retries": 3,
+    "dead_letter_path": "/data/dead_letters/",
+    "enable_metrics": true
+  }
+}
