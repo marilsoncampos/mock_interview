@@ -1,0 +1,91 @@
+# pipeline_config.yaml — Main configuration for the lakehouse pipeline
+# Environment-specific overrides are loaded from config/{env}.yaml
+
+pipeline:
+  name: "customer_360"
+  schedule: "0 2 * * *"      # Daily at 2 AM UTC
+  owner: "data-engineering"
+  alert_channel: "#data-alerts"
+
+spark:
+  app_name: "acme-lakehouse"
+  master: "yarn"
+  config:
+    spark.sql.extensions: "io.delta.sql.DeltaSparkSessionExtension"
+    spark.sql.catalog.spark_catalog: "org.apache.spark.sql.delta.catalog.DeltaCatalog"
+    spark.sql.adaptive.enabled: "true"
+    spark.sql.adaptive.coalescePartitions.enabled: "true"
+    spark.sql.shuffle.partitions: "200"
+    spark.serializer: "org.apache.spark.serializer.KryoSerializer"
+    spark.sql.sources.partitionOverwriteMode: "dynamic"
+
+sources:
+  raw_events:
+    format: "json"
+    path: "s3a://acme-raw/events/"
+    schema_path: "schemas/events.json"
+    partition_columns: ["event_date"]
+    read_options:
+      multiLine: "false"
+      mode: "PERMISSIVE"
+      columnNameOfCorruptRecord: "_corrupt_record"
+
+  raw_customers:
+    format: "csv"
+    path: "s3a://acme-raw/customers/"
+    read_options:
+      header: "true"
+      inferSchema: "true"
+      escape: '"'
+
+  raw_transactions:
+    format: "parquet"
+    path: "s3a://acme-raw/transactions/"
+    partition_columns: ["txn_date"]
+
+layers:
+  bronze:
+    path: "s3a://acme-lakehouse/bronze/"
+    format: "delta"
+    write_mode: "append"
+    merge_key: null
+
+  silver:
+    path: "s3a://acme-lakehouse/silver/"
+    format: "delta"
+    write_mode: "merge"
+    merge_key: "customer_id"
+    partition_by: ["region"]
+
+  gold:
+    path: "s3a://acme-lakehouse/gold/"
+    format: "delta"
+    write_mode: "overwrite"
+    partition_by: ["report_date"]
+
+quality:
+  fail_on_error: false
+  quarantine_path: "s3a://acme-lakehouse/quarantine/"
+  checks:
+    - name: "no_null_customer_ids"
+      column: "customer_id"
+      rule: "not_null"
+      severity: "critical"
+
+    - name: "valid_email_format"
+      column: "email"
+      rule: "regex"
+      pattern: "^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\\.[a-zA-Z0-9-.]+$"
+      severity: "warning"
+
+    - name: "transaction_amount_positive"
+      column: "amount"
+      rule: "greater_than"
+      value: 0
+      severity: "critical"
+
+    - name: "no_future_dates"
+      column: "event_date"
+      rule: "less_than_or_equal"
+      value: "current_date()"
+      severity: "warning"
